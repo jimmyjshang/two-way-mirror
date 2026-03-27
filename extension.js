@@ -1,7 +1,7 @@
 const vscode = require('vscode');
 const { EventBus } = require('./event-bus');
 const { echoPlugin, observerPlugin, validatePlugin } = require('./plugin-interface');
-const { createClaudeCodePlugin } = require('./claude-code-plugin');
+const { createClaudeCodePlugin } = require('./plugins/claude');
 
 // ============================================================
 // CONFIGURE YOUR PLUGINS HERE

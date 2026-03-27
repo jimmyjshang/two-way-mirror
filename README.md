@@ -137,7 +137,8 @@ Two-Way Mirror/
 ├── extension.js           Main extension — UI, routing, plugin config
 ├── event-bus.js           One-way event pipe from A to B
 ├── plugin-interface.js    Plugin contract + built-in echo/observer defaults
-├── claude-code-plugin.js  Claude Code CLI plugin (Pane A default)
+├── plugins/
+│   └── claude.js          Claude Code CLI plugin (Pane A default)
 ├── examples/
 │   └── claude-plugin.js   Starter template for Claude API integration
 └── README.md              You're reading it
