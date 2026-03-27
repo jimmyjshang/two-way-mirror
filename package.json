@@ -3,6 +3,11 @@
   "displayName": "Two-Way Mirror",
   "description": "Split-pane AI coding assistant with a live reviewer",
   "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jimmyjshang/two-way-mirror"
+  },
+  "license": "MIT",
   "engines": { "vscode": "^1.85.0" },
   "categories": ["Other"],
   "activationEvents": [],

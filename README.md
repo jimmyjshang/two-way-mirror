@@ -23,18 +23,25 @@ What powers Pane A and Pane B is up to you. You bring your own AI, your own logi
 
 ## Installation
 
-1. Clone or copy this folder somewhere local
-2. Open VS Code
-3. Open the Command Palette (`Cmd+Shift+P`)
-4. If you haven't already, run **"Shell Command: Install 'code' command in PATH"**
-5. In your terminal:
+### Permanent install (recommended)
 
 ```bash
-code --extensionDevelopmentPath="/path/to/Two-Way Mirror"
+git clone https://github.com/jimmyjshang/two-way-mirror.git
+cd two-way-mirror
+npm install -g @vscode/vsce
+vsce package
+code --install-extension two-way-mirror-0.0.1.vsix
 ```
 
-6. A new VS Code window opens with the extension loaded
-7. `Cmd+Shift+P` → **"Two-Way Mirror: Open"** (or `Cmd+Shift+M`)
+Once installed, it's always available in any VS Code window. Open it with `Cmd+Shift+M` (Mac) / `Ctrl+Shift+M` (Windows/Linux), or via Command Palette → **"Two-Way Mirror: Open"**.
+
+### Dev mode (temporary, for hacking on it)
+
+```bash
+code --extensionDevelopmentPath="/path/to/two-way-mirror"
+```
+
+This loads the extension for that VS Code session only. Useful if you're modifying the extension itself.
 
 ## Writing a plugin
 
