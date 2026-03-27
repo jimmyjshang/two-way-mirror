@@ -17,25 +17,14 @@ const path = require('path');
 const fs = require('fs');
 
 /**
- * Find the claude CLI binary. Searches in order:
- *   1. PATH (if installed globally via npm)
- *   2. Claude desktop app bundle (version-agnostic — finds latest)
- *   3. Common npm global locations
+ * Find the claude CLI binary. Returns { command, prefixArgs } where:
+ *   - command is what to pass to spawn() as the first arg
+ *   - prefixArgs are args to prepend (e.g. the script path when running via node)
  *
- * Returns the full path, or 'claude' as fallback (hoping PATH works at runtime).
+ * Node.js spawn() can't execute shebang scripts on all platforms, so if the
+ * binary is a Node script we run it as `node <script>` instead.
  */
 function findClaudeBinary() {
-  // 1. Check if `claude` is directly on PATH
-  try {
-    const result = execSync('which claude 2>/dev/null || where claude 2>/dev/null', {
-      encoding: 'utf-8',
-      timeout: 3000
-    }).trim();
-    if (result) return result;
-  } catch (e) {
-    // not on PATH
-  }
-
   // Helper: find latest semver directory and return the binary inside it
   function latestVersionBinary(baseDir, binarySubpath) {
     try {
@@ -58,20 +47,47 @@ function findClaudeBinary() {
     return null;
   }
 
-  // 2. Claude desktop app — native macOS binary (claude-code/<ver>/claude.app/Contents/MacOS/claude)
+  // Helper: check if a file is a script (has shebang) vs native binary
+  function resolveSpawn(filePath) {
+    try {
+      const fd = fs.openSync(filePath, 'r');
+      const buf = Buffer.alloc(2);
+      fs.readSync(fd, buf, 0, 2, 0);
+      fs.closeSync(fd);
+      if (buf.toString() === '#!') {
+        // It's a script — run through node to avoid ENOEXEC
+        return { command: process.execPath, prefixArgs: [filePath] };
+      }
+    } catch (e) { /* fall through */ }
+    return { command: filePath, prefixArgs: [] };
+  }
+
+  // Candidate paths in priority order
+  const candidates = [];
+
+  // 1. Check PATH
+  try {
+    const result = execSync('which claude 2>/dev/null || where claude 2>/dev/null', {
+      encoding: 'utf-8',
+      timeout: 3000
+    }).trim();
+    if (result) candidates.push(result);
+  } catch (e) { /* not on PATH */ }
+
+  // 2. Claude desktop app — native macOS binary
   const claudeCodeBase = path.join(
     process.env.HOME || '',
     'Library/Application Support/Claude/claude-code'
   );
   const macNative = latestVersionBinary(claudeCodeBase, 'claude.app/Contents/MacOS/claude');
-  if (macNative) return macNative;
+  if (macNative) candidates.push(macNative);
 
   // 3. Windows — Claude desktop app
   const appDataLocal = process.env.LOCALAPPDATA || '';
   if (appDataLocal) {
     const winBase = path.join(appDataLocal, 'Claude', 'claude-code');
     const winBin = latestVersionBinary(winBase, 'claude.exe');
-    if (winBin) return winBin;
+    if (winBin) candidates.push(winBin);
   }
 
   // 4. Common npm global locations
@@ -81,11 +97,16 @@ function findClaudeBinary() {
     '/opt/homebrew/bin/claude'
   ];
   for (const p of npmPaths) {
-    if (fs.existsSync(p)) return p;
+    if (fs.existsSync(p)) candidates.push(p);
   }
 
-  // Fallback — hope it's on PATH at runtime
-  return 'claude';
+  // Pick first candidate and resolve how to spawn it
+  for (const c of candidates) {
+    return resolveSpawn(c);
+  }
+
+  // Fallback
+  return { command: 'claude', prefixArgs: [] };
 }
 
 /**
@@ -104,7 +125,7 @@ function createClaudeCodePlugin(options = {}) {
   } = options;
 
   // Auto-discover claude binary (re-resolves each session to pick up updates)
-  let claudeBinary = null;
+  let resolved = null;
 
   // Track the conversation for multi-turn
   let conversationId = null;
@@ -114,13 +135,14 @@ function createClaudeCodePlugin(options = {}) {
 
     onUserMessage: async (text, { eventBus }) => {
       // Resolve binary on first call (and cache it for the session)
-      if (!claudeBinary) {
-        claudeBinary = findClaudeBinary();
-        eventBus.emit('custom', 'a', { message: `Using claude binary: ${claudeBinary}` });
+      if (!resolved) {
+        resolved = findClaudeBinary();
+        console.log(`[claude-code-plugin] Resolved: ${resolved.command} ${resolved.prefixArgs.join(' ')}`);
       }
 
       return new Promise((resolve, reject) => {
         const args = [
+          ...resolved.prefixArgs,
           '-p', text,
           '--output-format', 'stream-json',
           '--verbose'
@@ -138,7 +160,7 @@ function createClaudeCodePlugin(options = {}) {
           args.push('--continue', conversationId);
         }
 
-        const child = spawn(claudeBinary, args, {
+        const child = spawn(resolved.command, args, {
           cwd: workingDirectory,
           env: { ...process.env },
           stdio: ['pipe', 'pipe', 'pipe']
