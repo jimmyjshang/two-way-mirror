@@ -1,20 +1,29 @@
 const vscode = require('vscode');
 const { EventBus } = require('./event-bus');
 const { echoPlugin, observerPlugin, validatePlugin } = require('./plugin-interface');
+const { createClaudeCodePlugin } = require('./claude-code-plugin');
 
 // ============================================================
 // CONFIGURE YOUR PLUGINS HERE
 // ============================================================
-// Replace these with your own plugins. See plugin-interface.js
-// for the interface and examples.
 //
-// Pane A: the "primary" session (coding, chatting, whatever).
+// Pane A: the "primary" session — powered by Claude Code CLI.
+//         Full file editing, bash, search — the real deal.
 //         Pane A has NO idea Pane B exists.
 //
 // Pane B: the "mirror" / observer / reviewer.
-//         Pane B can see everything Pane A does via the EventBus.
+//         Sees everything Pane A does via the EventBus.
+//         Swap in your own plugin (see plugin-interface.js).
 //
-const PANE_A_PLUGIN = echoPlugin;       // <-- swap this
+// To use Claude Code in Pane A (requires `claude` CLI on PATH):
+const PANE_A_PLUGIN = createClaudeCodePlugin({
+  workingDirectory: vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd(),
+  allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep']
+});
+//
+// To fall back to simple echo mode, uncomment this instead:
+// const PANE_A_PLUGIN = echoPlugin;
+//
 const PANE_B_PLUGIN = observerPlugin;   // <-- swap this
 // ============================================================
 
@@ -56,6 +65,7 @@ class TwoWayMirrorPanel {
     this.panel.webview.html = this.getHtml();
 
     // Auto-forward Pane A activity to Pane B's UI
+    // Also show tool calls in Pane A so user sees what Claude Code is doing
     this.eventBus.on('*', (event) => {
       if (event.pane === 'a') {
         this.panel.webview.postMessage({
@@ -63,6 +73,15 @@ class TwoWayMirrorPanel {
           pane: 'b',
           text: this.formatEvent(event)
         });
+
+        // Show tool calls in Pane A as system messages
+        if (event.type === 'tool-call' || event.type === 'tool-result') {
+          this.panel.webview.postMessage({
+            type: 'activityLog',
+            pane: 'a',
+            text: this.formatEvent(event)
+          });
+        }
       }
     });
 
@@ -300,7 +319,7 @@ class TwoWayMirrorPanel {
   <div class="pane active" id="pane-a">
     <div class="pane-header" onclick="setActive('a')">Pane A &mdash; Primary Session</div>
     <div class="messages" id="messages-a">
-      <div class="placeholder">Primary session. Plug in any AI backend.<br>This side has no idea Pane B exists.</div>
+      <div class="placeholder">Claude Code session. Type here — Claude does the work.<br>This side has no idea Pane B exists.</div>
     </div>
     <div class="input-area">
       <input type="text" id="input-a" placeholder="Type a message..." />
