@@ -4,45 +4,125 @@ const { echoPlugin, observerPlugin, validatePlugin } = require('./plugin-interfa
 const { createClaudeCodePlugin } = require('./plugins/claude');
 
 // ============================================================
-// CONFIGURE YOUR PLUGINS HERE
+// PLUGIN REGISTRY
 // ============================================================
-//
-// Pane A: the "primary" session — powered by Claude Code CLI.
-//         Full file editing, bash, search — the real deal.
-//         Pane A has NO idea Pane B exists.
-//
-// Pane B: the "mirror" / observer / reviewer.
-//         Sees everything Pane A does via the EventBus.
-//         Can also run Claude Code with its own system prompt.
-//
-const workingDirectory = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd();
+// Add new plugins here. They'll automatically appear in the
+// configuration quick pick.
 
-const PANE_A_PLUGIN = createClaudeCodePlugin({ workingDirectory });
+const PANE_B_SYSTEM_PROMPT = `You are an observer in Pane B of a two-way mirror. Pane A is running a separate Claude Code session that cannot see you. You receive a live feed of everything Pane A does — user messages, agent responses, tool calls, and results. Use this context to help the user: review Pane A's work, catch mistakes, suggest improvements, or provide a second opinion. You have full tool access yourself. When the user talks to you, they're asking for your independent perspective on what's happening in Pane A.`;
 
-const PANE_B_PLUGIN = createClaudeCodePlugin({
-  workingDirectory,
-  systemPrompt: `You are an observer in Pane B of a two-way mirror. Pane A is running a separate Claude Code session that cannot see you. You receive a live feed of everything Pane A does — user messages, agent responses, tool calls, and results. Use this context to help the user: review Pane A's work, catch mistakes, suggest improvements, or provide a second opinion. You have full tool access yourself. When the user talks to you, they're asking for your independent perspective on what's happening in Pane A.`
-});
+function resolvePlugin(id, pane) {
+  const workingDirectory = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd();
 
-// To use the read-only observer instead of Claude in Pane B:
-// const PANE_B_PLUGIN = observerPlugin;
-//
-// To use the simple echo shell in Pane A:
-// const PANE_A_PLUGIN = echoPlugin;
+  switch (id) {
+    case 'claude':
+      return pane === 'b'
+        ? createClaudeCodePlugin({ workingDirectory, systemPrompt: PANE_B_SYSTEM_PROMPT })
+        : createClaudeCodePlugin({ workingDirectory });
+    case 'observer':
+      return observerPlugin;
+    case 'echo':
+      return echoPlugin;
+    default:
+      return echoPlugin;
+  }
+}
+
+// Labels for the quick pick UI
+const PLUGIN_LABELS = {
+  claude: 'Claude Code',
+  echo: 'Echo (no AI)',
+  observer: 'Observer (read-only log)'
+};
+
+// ============================================================
+// CONFIGURATION UI
+// ============================================================
+
+async function promptPluginConfig() {
+  const config = vscode.workspace.getConfiguration('twoWayMirror');
+
+  // Step 1: Where should Claude Code run?
+  const choice = await vscode.window.showQuickPick([
+    { label: 'Pane A only', description: 'Claude in A, observer in B', detail: 'The standard setup — work in A, watch in B', value: 'a-only' },
+    { label: 'Pane B only', description: 'Echo in A, Claude reviewer in B', detail: 'Use B as a standalone reviewer session', value: 'b-only' },
+    { label: 'Both panes', description: 'Claude in A + Claude reviewer in B', detail: 'Two independent Claude sessions — A works, B reviews', value: 'both' },
+    { label: 'Neither', description: 'Echo shell in both panes', detail: 'No AI — just the raw two-pane shell', value: 'neither' },
+  ], {
+    placeHolder: 'Where should Claude Code run?',
+    title: 'Two-Way Mirror — Plugin Setup'
+  });
+
+  if (!choice) return null; // user cancelled
+
+  let paneA, paneB;
+  switch (choice.value) {
+    case 'a-only':  paneA = 'claude'; paneB = 'observer'; break;
+    case 'b-only':  paneA = 'echo';   paneB = 'claude';   break;
+    case 'both':    paneA = 'claude'; paneB = 'claude';   break;
+    case 'neither': paneA = 'echo';   paneB = 'echo';     break;
+  }
+
+  await config.update('paneA', paneA, vscode.ConfigurationTarget.Global);
+  await config.update('paneB', paneB, vscode.ConfigurationTarget.Global);
+
+  return { paneA, paneB };
+}
+
+function getPluginConfig() {
+  const config = vscode.workspace.getConfiguration('twoWayMirror');
+  return {
+    paneA: config.get('paneA') || '',
+    paneB: config.get('paneB') || ''
+  };
+}
+
+// ============================================================
+// EXTENSION ACTIVATION
 // ============================================================
 
 function activate(context) {
-  const disposable = vscode.commands.registerCommand('twoWayMirror.open', () => {
-    TwoWayMirrorPanel.createOrShow(context.extensionUri);
+  // Main open command
+  const openCmd = vscode.commands.registerCommand('twoWayMirror.open', async () => {
+    let { paneA, paneB } = getPluginConfig();
+
+    // First time? Show the setup prompt
+    if (!paneA || !paneB) {
+      const result = await promptPluginConfig();
+      if (!result) return; // user cancelled
+      paneA = result.paneA;
+      paneB = result.paneB;
+    }
+
+    TwoWayMirrorPanel.createOrShow(context.extensionUri, paneA, paneB);
   });
-  context.subscriptions.push(disposable);
+
+  // Configure plugins command (can re-run anytime)
+  const configCmd = vscode.commands.registerCommand('twoWayMirror.configurePlugins', async () => {
+    const result = await promptPluginConfig();
+    if (!result) return;
+
+    // If panel is already open, notify user to reopen
+    if (TwoWayMirrorPanel.currentPanel) {
+      const action = await vscode.window.showInformationMessage(
+        'Plugin configuration updated. Reopen Two-Way Mirror to apply changes.',
+        'Reopen now'
+      );
+      if (action === 'Reopen now') {
+        TwoWayMirrorPanel.currentPanel.panel.dispose();
+        TwoWayMirrorPanel.createOrShow(context.extensionUri, result.paneA, result.paneB);
+      }
+    }
+  });
+
+  context.subscriptions.push(openCmd, configCmd);
 }
 
 class TwoWayMirrorPanel {
   static currentPanel;
   static viewType = 'twoWayMirror';
 
-  static createOrShow(extensionUri) {
+  static createOrShow(extensionUri, paneAId, paneBId) {
     if (TwoWayMirrorPanel.currentPanel) {
       TwoWayMirrorPanel.currentPanel.panel.reveal(vscode.ViewColumn.One);
       return;
@@ -55,14 +135,16 @@ class TwoWayMirrorPanel {
       { enableScripts: true, retainContextWhenHidden: true }
     );
 
-    TwoWayMirrorPanel.currentPanel = new TwoWayMirrorPanel(panel);
+    TwoWayMirrorPanel.currentPanel = new TwoWayMirrorPanel(panel, paneAId, paneBId);
   }
 
-  constructor(panel) {
+  constructor(panel, paneAId, paneBId) {
     this.panel = panel;
     this.eventBus = new EventBus();
-    this.pluginA = validatePlugin(PANE_A_PLUGIN, 'Pane A');
-    this.pluginB = validatePlugin(PANE_B_PLUGIN, 'Pane B');
+    this.paneAId = paneAId;
+    this.paneBId = paneBId;
+    this.pluginA = validatePlugin(resolvePlugin(paneAId, 'a'), 'Pane A');
+    this.pluginB = validatePlugin(resolvePlugin(paneBId, 'b'), 'Pane B');
     this.historyA = [];
     this.historyB = [];
 
@@ -187,6 +269,9 @@ class TwoWayMirrorPanel {
   }
 
   getHtml() {
+    const paneALabel = PLUGIN_LABELS[this.paneAId] || this.paneAId;
+    const paneBLabel = PLUGIN_LABELS[this.paneBId] || this.paneBId;
+
     return /*html*/ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -355,9 +440,9 @@ class TwoWayMirrorPanel {
 
 <div class="panes">
   <div class="pane active" id="pane-a">
-    <div class="pane-header" onclick="setActive('a')">Pane A &mdash; Primary Session</div>
+    <div class="pane-header" onclick="setActive('a')">Pane A &mdash; ${paneALabel}</div>
     <div class="messages" id="messages-a">
-      <div class="placeholder">Claude Code session. Type here — Claude does the work.<br>This side has no idea Pane B exists.</div>
+      <div class="placeholder">${this.paneAId === 'claude' ? 'Claude Code session. Type here — Claude does the work.' : 'Echo shell. Messages are echoed back.'}<br>This side has no idea Pane B exists.</div>
     </div>
     <div class="input-area">
       <input type="text" id="input-a" placeholder="Type a message..." />
@@ -368,9 +453,9 @@ class TwoWayMirrorPanel {
   <div class="divider"></div>
 
   <div class="pane" id="pane-b">
-    <div class="pane-header" onclick="setActive('b')">Pane B &mdash; Mirror / Observer</div>
+    <div class="pane-header" onclick="setActive('b')">Pane B &mdash; ${paneBLabel}</div>
     <div class="messages" id="messages-b">
-      <div class="placeholder">Observer session. Sees all of Pane A's activity.<br>Plug in your own reviewer, coach, or analyzer.</div>
+      <div class="placeholder">${this.paneBId === 'claude' ? 'Claude Code reviewer. Gets a live feed of Pane A.' : this.paneBId === 'observer' ? 'Observer. Sees all of Pane A\'s activity.' : 'Echo shell.'}<br>Pane A cannot see this side.</div>
     </div>
     <div class="input-area">
       <input type="text" id="input-b" placeholder="Type a message..." />
@@ -439,7 +524,7 @@ class TwoWayMirrorPanel {
       addMessage(msg.pane, 'agent', msg.text);
     }
     if (msg.type === 'activityLog') {
-      addMessage('b', 'system', msg.text, true);
+      addMessage(msg.pane, 'system', msg.text, true);
     }
   });
 </script>

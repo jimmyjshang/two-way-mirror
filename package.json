@@ -21,6 +21,10 @@
       {
         "command": "twoWayMirror.open",
         "title": "Two-Way Mirror: Open"
+      },
+      {
+        "command": "twoWayMirror.configurePlugins",
+        "title": "Two-Way Mirror: Configure Plugins"
       }
     ],
     "keybindings": [
@@ -29,7 +33,35 @@
         "key": "ctrl+shift+m",
         "mac": "cmd+shift+m"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Two-Way Mirror",
+      "properties": {
+        "twoWayMirror.paneA": {
+          "type": "string",
+          "default": "",
+          "enum": ["", "claude", "echo"],
+          "enumDescriptions": [
+            "Not configured — will prompt on first open",
+            "Claude Code (full AI session)",
+            "Echo (simple shell, no AI)"
+          ],
+          "description": "Plugin for Pane A"
+        },
+        "twoWayMirror.paneB": {
+          "type": "string",
+          "default": "",
+          "enum": ["", "claude", "observer", "echo"],
+          "enumDescriptions": [
+            "Not configured — will prompt on first open",
+            "Claude Code (reviewer / second opinion)",
+            "Observer (read-only activity log)",
+            "Echo (simple shell, no AI)"
+          ],
+          "description": "Plugin for Pane B"
+        }
+      }
+    }
   },
   "directories": {
     "example": "examples"
