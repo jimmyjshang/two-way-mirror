@@ -15,10 +15,9 @@ const { createClaudeCodePlugin } = require('./claude-code-plugin');
 //         Sees everything Pane A does via the EventBus.
 //         Swap in your own plugin (see plugin-interface.js).
 //
-// To use Claude Code in Pane A (requires `claude` CLI on PATH):
+// To use Claude Code in Pane A (requires `claude` CLI):
 const PANE_A_PLUGIN = createClaudeCodePlugin({
-  workingDirectory: vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd(),
-  allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep']
+  workingDirectory: vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd()
 });
 //
 // To fall back to simple echo mode, uncomment this instead:

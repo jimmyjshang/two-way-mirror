@@ -114,21 +114,23 @@ function findClaudeBinary() {
  *
  * @param {object} options
  * @param {string} options.workingDirectory — where Claude Code operates (default: workspace root)
- * @param {string[]} options.allowedTools — tools to auto-approve (default: all standard tools)
+ * @param {boolean} options.fullAccess — skip all permission prompts (default: true)
+ * @param {string[]} options.allowedTools — if fullAccess is false, tools to auto-approve
  * @param {string} options.systemPrompt — optional additional system prompt
  */
 function createClaudeCodePlugin(options = {}) {
   const {
     workingDirectory = process.cwd(),
-    allowedTools = ['Read', 'Edit', 'Write', 'Bash', 'Glob', 'Grep'],
+    fullAccess = true,
+    allowedTools = [],
     systemPrompt = ''
   } = options;
 
   // Auto-discover claude binary (re-resolves each session to pick up updates)
   let resolved = null;
 
-  // Track the conversation for multi-turn
-  let conversationId = null;
+  // Track the conversation for multi-turn via session ID
+  let sessionId = null;
 
   return {
     name: 'claude-code',
@@ -148,7 +150,10 @@ function createClaudeCodePlugin(options = {}) {
           '--verbose'
         ];
 
-        if (allowedTools.length > 0) {
+        // Permission mode
+        if (fullAccess) {
+          args.push('--dangerously-skip-permissions');
+        } else if (allowedTools.length > 0) {
           args.push('--allowedTools', allowedTools.join(','));
         }
 
@@ -156,8 +161,9 @@ function createClaudeCodePlugin(options = {}) {
           args.push('--append-system-prompt', systemPrompt);
         }
 
-        if (conversationId) {
-          args.push('--continue', conversationId);
+        // Multi-turn: resume previous session if we have one
+        if (sessionId) {
+          args.push('--resume', sessionId);
         }
 
         const child = spawn(resolved.command, args, {
@@ -166,9 +172,10 @@ function createClaudeCodePlugin(options = {}) {
           stdio: ['pipe', 'pipe', 'pipe']
         });
 
-        let fullResponse = '';
         let lastTextContent = '';
         let buffer = '';
+
+        const captureSessionId = (id) => { sessionId = id; };
 
         child.stdout.on('data', (chunk) => {
           buffer += chunk.toString();
@@ -183,7 +190,7 @@ function createClaudeCodePlugin(options = {}) {
               const event = JSON.parse(line);
               handleStreamEvent(event, eventBus, (text) => {
                 lastTextContent = text;
-              });
+              }, captureSessionId);
             } catch (e) {
               // Not JSON, might be plain text output
               if (line.trim()) {
@@ -207,7 +214,7 @@ function createClaudeCodePlugin(options = {}) {
               const event = JSON.parse(buffer);
               handleStreamEvent(event, eventBus, (text) => {
                 lastTextContent = text;
-              });
+              }, captureSessionId);
             } catch (e) {
               if (buffer.trim()) {
                 lastTextContent += buffer.trim();
@@ -233,7 +240,7 @@ function createClaudeCodePlugin(options = {}) {
 /**
  * Parse a stream-json event from Claude Code and emit to the event bus.
  */
-function handleStreamEvent(event, eventBus, onText) {
+function handleStreamEvent(event, eventBus, onText, onSessionId) {
   // Claude Code stream-json events have different shapes.
   // Common types: assistant message, tool_use, tool_result, result
 
@@ -261,9 +268,9 @@ function handleStreamEvent(event, eventBus, onText) {
   }
 
   if (event.type === 'result') {
-    // Final result
-    if (event.session_id) {
-      // Could store for --continue in future turns
+    // Capture session_id for multi-turn --resume
+    if (event.session_id && onSessionId) {
+      onSessionId(event.session_id);
     }
     if (event.result) {
       onText(event.result);
