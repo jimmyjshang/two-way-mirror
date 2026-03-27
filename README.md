@@ -43,7 +43,31 @@ code --extensionDevelopmentPath="/path/to/two-way-mirror"
 
 This loads the extension for that VS Code session only. Useful if you're modifying the extension itself.
 
-## Writing a plugin
+## Using the Claude Code plugin
+
+Two-Way Mirror ships with a ready-to-go Claude Code plugin that turns Pane A into a full Claude Code session — file editing, bash commands, MCP servers, multi-turn conversations, the works.
+
+It's already wired up by default. Just make sure you have the Claude CLI installed:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+```
+
+The plugin auto-discovers the `claude` binary (checks PATH, Claude desktop app, common install locations) so there's nothing else to configure.
+
+If you'd rather use the basic echo shell instead, open `extension.js` and swap the plugin:
+
+```js
+// Change this:
+const PANE_A_PLUGIN = createClaudeCodePlugin({ ... });
+
+// To this:
+const PANE_A_PLUGIN = echoPlugin;
+```
+
+Then repackage and reinstall (`vsce package && code --install-extension two-way-mirror-0.0.1.vsix --force`).
+
+## Writing your own plugin
 
 A plugin is an object with one function. That's it.
 
@@ -113,6 +137,7 @@ Two-Way Mirror/
 ├── extension.js           Main extension — UI, routing, plugin config
 ├── event-bus.js           One-way event pipe from A to B
 ├── plugin-interface.js    Plugin contract + built-in echo/observer defaults
+├── claude-code-plugin.js  Claude Code CLI plugin (Pane A default)
 ├── examples/
 │   └── claude-plugin.js   Starter template for Claude API integration
 └── README.md              You're reading it
