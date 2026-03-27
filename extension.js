@@ -13,17 +13,22 @@ const { createClaudeCodePlugin } = require('./plugins/claude');
 //
 // Pane B: the "mirror" / observer / reviewer.
 //         Sees everything Pane A does via the EventBus.
-//         Swap in your own plugin (see plugin-interface.js).
+//         Can also run Claude Code with its own system prompt.
 //
-// To use Claude Code in Pane A (requires `claude` CLI):
-const PANE_A_PLUGIN = createClaudeCodePlugin({
-  workingDirectory: vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd()
+const workingDirectory = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || process.cwd();
+
+const PANE_A_PLUGIN = createClaudeCodePlugin({ workingDirectory });
+
+const PANE_B_PLUGIN = createClaudeCodePlugin({
+  workingDirectory,
+  systemPrompt: `You are an observer in Pane B of a two-way mirror. Pane A is running a separate Claude Code session that cannot see you. You receive a live feed of everything Pane A does — user messages, agent responses, tool calls, and results. Use this context to help the user: review Pane A's work, catch mistakes, suggest improvements, or provide a second opinion. You have full tool access yourself. When the user talks to you, they're asking for your independent perspective on what's happening in Pane A.`
 });
+
+// To use the read-only observer instead of Claude in Pane B:
+// const PANE_B_PLUGIN = observerPlugin;
 //
-// To fall back to simple echo mode, uncomment this instead:
+// To use the simple echo shell in Pane A:
 // const PANE_A_PLUGIN = echoPlugin;
-//
-const PANE_B_PLUGIN = observerPlugin;   // <-- swap this
 // ============================================================
 
 function activate(context) {
@@ -63,24 +68,24 @@ class TwoWayMirrorPanel {
 
     this.panel.webview.html = this.getHtml();
 
-    // Auto-forward Pane A activity to Pane B's UI
-    // Also show tool calls in Pane A so user sees what Claude Code is doing
+    // Forward activity to the UI
     this.eventBus.on('*', (event) => {
+      // Show tool calls in whichever pane they came from
+      if (event.type === 'tool-call' || event.type === 'tool-result') {
+        this.panel.webview.postMessage({
+          type: 'activityLog',
+          pane: event.pane,
+          text: this.formatEvent(event)
+        });
+      }
+
+      // Also forward all Pane A activity to Pane B's UI as a log
       if (event.pane === 'a') {
         this.panel.webview.postMessage({
           type: 'activityLog',
           pane: 'b',
           text: this.formatEvent(event)
         });
-
-        // Show tool calls in Pane A as system messages
-        if (event.type === 'tool-call' || event.type === 'tool-result') {
-          this.panel.webview.postMessage({
-            type: 'activityLog',
-            pane: 'a',
-            text: this.formatEvent(event)
-          });
-        }
       }
     });
 
@@ -103,6 +108,15 @@ class TwoWayMirrorPanel {
     history.push({ role: 'user', text });
     this.eventBus.emit('user-message', pane, { text });
 
+    // For Pane B: prepend recent Pane A activity so Claude B has context
+    let promptText = text;
+    if (pane === 'b' && this.pluginB.name === 'claude-code') {
+      const paneAActivity = this.getPaneASummary();
+      if (paneAActivity) {
+        promptText = `[PANE A ACTIVITY LOG]\n${paneAActivity}\n[END PANE A ACTIVITY]\n\nUser message: ${text}`;
+      }
+    }
+
     // Call the plugin
     const context = {
       eventBus: this.eventBus,
@@ -111,7 +125,7 @@ class TwoWayMirrorPanel {
     };
 
     try {
-      const response = await plugin.onUserMessage(text, context);
+      const response = await plugin.onUserMessage(promptText, context);
       if (response) {
         history.push({ role: 'agent', text: response });
         this.eventBus.emit('agent-response', pane, { text: response });
@@ -129,6 +143,31 @@ class TwoWayMirrorPanel {
         text: `Error: ${err.message}`
       });
     }
+  }
+
+  getPaneASummary() {
+    const events = this.eventBus.getHistory({ pane: 'a' });
+    if (events.length === 0) return '';
+
+    // Take last 50 events to keep it manageable
+    const recent = events.slice(-50);
+    return recent.map(e => {
+      const time = new Date(e.timestamp).toLocaleTimeString();
+      switch (e.type) {
+        case 'user-message':
+          return `[${time}] User → Pane A: ${e.data.text}`;
+        case 'agent-response':
+          return `[${time}] Pane A agent: ${e.data.text}`;
+        case 'tool-call':
+          return `[${time}] Tool call: ${e.data.tool} ${JSON.stringify(e.data.args || {})}`;
+        case 'tool-result':
+          return `[${time}] Tool result: ${e.data.summary || '(done)'}`;
+        case 'error':
+          return `[${time}] Error: ${e.data.message}`;
+        default:
+          return `[${time}] ${e.type}: ${JSON.stringify(e.data)}`;
+      }
+    }).join('\n');
   }
 
   formatEvent(event) {
