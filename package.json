@@ -5,11 +5,15 @@
   "version": "0.0.1",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jimmyjshang/two-way-mirror"
+    "url": "git+https://github.com/jimmyjshang/two-way-mirror.git"
   },
   "license": "MIT",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Other"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [],
   "main": "./extension.js",
   "contributes": {
@@ -26,5 +30,21 @@
         "mac": "cmd+shift+m"
       }
     ]
+  },
+  "directories": {
+    "example": "examples"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/jimmyjshang/two-way-mirror/issues"
+  },
+  "homepage": "https://github.com/jimmyjshang/two-way-mirror#readme",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.85"
   }
 }
