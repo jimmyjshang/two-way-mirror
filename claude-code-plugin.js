@@ -7,13 +7,103 @@
  *
  * The event bus captures everything, so Pane B sees it all.
  *
- * Requirements:
- *   - `claude` CLI installed and on your PATH
- *   - Authenticated (run `claude` once in terminal to set up)
+ * Auto-discovers the `claude` binary — checks PATH first, then known install
+ * locations (Claude desktop app, npm global, etc.). Updates automatically
+ * when the app updates to a new version.
  */
 
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
+
+/**
+ * Find the claude CLI binary. Searches in order:
+ *   1. PATH (if installed globally via npm)
+ *   2. Claude desktop app bundle (version-agnostic — finds latest)
+ *   3. Common npm global locations
+ *
+ * Returns the full path, or 'claude' as fallback (hoping PATH works at runtime).
+ */
+function findClaudeBinary() {
+  // 1. Check if `claude` is directly on PATH
+  try {
+    const result = execSync('which claude 2>/dev/null || where claude 2>/dev/null', {
+      encoding: 'utf-8',
+      timeout: 3000
+    }).trim();
+    if (result) return result;
+  } catch (e) {
+    // not on PATH
+  }
+
+  // 2. Claude desktop app bundle (macOS) — find latest version
+  const claudeAppBase = path.join(
+    process.env.HOME || '',
+    'Library/Application Support/Claude/claude-code-vm'
+  );
+  try {
+    if (fs.existsSync(claudeAppBase)) {
+      const versions = fs.readdirSync(claudeAppBase)
+        .filter(d => /^\d+\.\d+\.\d+$/.test(d))
+        .sort((a, b) => {
+          // Sort by semver, highest first
+          const pa = a.split('.').map(Number);
+          const pb = b.split('.').map(Number);
+          for (let i = 0; i < 3; i++) {
+            if (pa[i] !== pb[i]) return pb[i] - pa[i];
+          }
+          return 0;
+        });
+
+      for (const ver of versions) {
+        const candidate = path.join(claudeAppBase, ver, 'claude');
+        if (fs.existsSync(candidate)) return candidate;
+      }
+    }
+  } catch (e) {
+    // can't read directory
+  }
+
+  // 3. Claude desktop app bundle (Windows)
+  const appDataLocal = process.env.LOCALAPPDATA || '';
+  if (appDataLocal) {
+    const winBase = path.join(appDataLocal, 'Claude', 'claude-code-vm');
+    try {
+      if (fs.existsSync(winBase)) {
+        const versions = fs.readdirSync(winBase)
+          .filter(d => /^\d+\.\d+\.\d+$/.test(d))
+          .sort((a, b) => {
+            const pa = a.split('.').map(Number);
+            const pb = b.split('.').map(Number);
+            for (let i = 0; i < 3; i++) {
+              if (pa[i] !== pb[i]) return pb[i] - pa[i];
+            }
+            return 0;
+          });
+
+        for (const ver of versions) {
+          const candidate = path.join(winBase, ver, 'claude.exe');
+          if (fs.existsSync(candidate)) return candidate;
+        }
+      }
+    } catch (e) {
+      // can't read directory
+    }
+  }
+
+  // 4. Common npm global locations
+  const npmPaths = [
+    path.join(process.env.HOME || '', '.npm-global/bin/claude'),
+    '/usr/local/bin/claude',
+    '/opt/homebrew/bin/claude'
+  ];
+  for (const p of npmPaths) {
+    if (fs.existsSync(p)) return p;
+  }
+
+  // Fallback — hope it's on PATH at runtime
+  return 'claude';
+}
 
 /**
  * Creates a Claude Code plugin instance.
@@ -30,6 +120,9 @@ function createClaudeCodePlugin(options = {}) {
     systemPrompt = ''
   } = options;
 
+  // Auto-discover claude binary (re-resolves each session to pick up updates)
+  let claudeBinary = null;
+
   // Track the conversation for multi-turn
   let conversationId = null;
 
@@ -37,6 +130,12 @@ function createClaudeCodePlugin(options = {}) {
     name: 'claude-code',
 
     onUserMessage: async (text, { eventBus }) => {
+      // Resolve binary on first call (and cache it for the session)
+      if (!claudeBinary) {
+        claudeBinary = findClaudeBinary();
+        eventBus.emit('custom', 'a', { message: `Using claude binary: ${claudeBinary}` });
+      }
+
       return new Promise((resolve, reject) => {
         const args = [
           '-p', text,
@@ -56,7 +155,7 @@ function createClaudeCodePlugin(options = {}) {
           args.push('--continue', conversationId);
         }
 
-        const child = spawn('claude', args, {
+        const child = spawn(claudeBinary, args, {
           cwd: workingDirectory,
           env: { ...process.env },
           stdio: ['pipe', 'pipe', 'pipe']
