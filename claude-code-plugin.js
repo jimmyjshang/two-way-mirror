@@ -36,17 +36,13 @@ function findClaudeBinary() {
     // not on PATH
   }
 
-  // 2. Claude desktop app bundle (macOS) — find latest version
-  const claudeAppBase = path.join(
-    process.env.HOME || '',
-    'Library/Application Support/Claude/claude-code-vm'
-  );
-  try {
-    if (fs.existsSync(claudeAppBase)) {
-      const versions = fs.readdirSync(claudeAppBase)
+  // Helper: find latest semver directory and return the binary inside it
+  function latestVersionBinary(baseDir, binarySubpath) {
+    try {
+      if (!fs.existsSync(baseDir)) return null;
+      const versions = fs.readdirSync(baseDir)
         .filter(d => /^\d+\.\d+\.\d+$/.test(d))
         .sort((a, b) => {
-          // Sort by semver, highest first
           const pa = a.split('.').map(Number);
           const pb = b.split('.').map(Number);
           for (let i = 0; i < 3; i++) {
@@ -54,41 +50,28 @@ function findClaudeBinary() {
           }
           return 0;
         });
-
       for (const ver of versions) {
-        const candidate = path.join(claudeAppBase, ver, 'claude');
+        const candidate = path.join(baseDir, ver, binarySubpath);
         if (fs.existsSync(candidate)) return candidate;
       }
-    }
-  } catch (e) {
-    // can't read directory
+    } catch (e) { /* can't read directory */ }
+    return null;
   }
 
-  // 3. Claude desktop app bundle (Windows)
+  // 2. Claude desktop app — native macOS binary (claude-code/<ver>/claude.app/Contents/MacOS/claude)
+  const claudeCodeBase = path.join(
+    process.env.HOME || '',
+    'Library/Application Support/Claude/claude-code'
+  );
+  const macNative = latestVersionBinary(claudeCodeBase, 'claude.app/Contents/MacOS/claude');
+  if (macNative) return macNative;
+
+  // 3. Windows — Claude desktop app
   const appDataLocal = process.env.LOCALAPPDATA || '';
   if (appDataLocal) {
-    const winBase = path.join(appDataLocal, 'Claude', 'claude-code-vm');
-    try {
-      if (fs.existsSync(winBase)) {
-        const versions = fs.readdirSync(winBase)
-          .filter(d => /^\d+\.\d+\.\d+$/.test(d))
-          .sort((a, b) => {
-            const pa = a.split('.').map(Number);
-            const pb = b.split('.').map(Number);
-            for (let i = 0; i < 3; i++) {
-              if (pa[i] !== pb[i]) return pb[i] - pa[i];
-            }
-            return 0;
-          });
-
-        for (const ver of versions) {
-          const candidate = path.join(winBase, ver, 'claude.exe');
-          if (fs.existsSync(candidate)) return candidate;
-        }
-      }
-    } catch (e) {
-      // can't read directory
-    }
+    const winBase = path.join(appDataLocal, 'Claude', 'claude-code');
+    const winBin = latestVersionBinary(winBase, 'claude.exe');
+    if (winBin) return winBin;
   }
 
   // 4. Common npm global locations
