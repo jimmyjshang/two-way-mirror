@@ -1,0 +1,25 @@
+{
+  "name": "two-way-mirror",
+  "displayName": "Two-Way Mirror",
+  "description": "Split-pane AI coding assistant with a live reviewer",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "twoWayMirror.open",
+        "title": "Two-Way Mirror: Open"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "twoWayMirror.open",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m"
+      }
+    ]
+  }
+}
